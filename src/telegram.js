@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { config, hasTelegramConfig } from './config.js';
-import { parseReportMessage } from './parser.js';
-import { saveTelegramMessage, updateMessageParseResult, upsertEmployeeReport } from './reports.js';
+import { parseIncomingTelegramMessage } from './parser.js';
+import { saveTelegramMessage, updateMessageParseResult, upsertEmployeeReport, upsertOwnerExpenseMessage } from './reports.js';
 
 let bot = null;
 
@@ -24,7 +24,7 @@ function formatErrors(dateLine, errors) {
   return lines.join('\n');
 }
 
-function formatSuccess(parsed) {
+function formatFullReportSuccess(parsed) {
   const expenseLines = parsed.expenses
     .map((expense) => `- ${expense.category}: ${expense.amount}${expense.comment ? ` (${expense.comment})` : ''}`)
     .join('\n');
@@ -48,6 +48,21 @@ function formatSuccess(parsed) {
   ].join('\n');
 }
 
+function formatExpenseOnlySuccess(parsed) {
+  const expenseLines = parsed.expenses
+    .map((expense) => `- ${expense.category}: ${expense.amount}${expense.comment ? ` (${expense.comment})` : ''}`)
+    .join('\n');
+
+  return [
+    `Расход за ${String(parsed.date.day).padStart(2, '0')}.${String(parsed.date.month).padStart(2, '0')} сохранён из короткого сообщения.`,
+    '',
+    'Добавлено:',
+    expenseLines,
+    '',
+    `Сумма: ${parsed.expenses.reduce((sum, item) => sum + item.amount, 0)}`
+  ].join('\n');
+}
+
 async function processMessage(ctx, messageKind = 'message') {
   const message = messageKind === 'edited_message' ? ctx.update.edited_message : ctx.message;
   if (!message?.text) return;
@@ -65,7 +80,7 @@ async function processMessage(ctx, messageKind = 'message') {
     parseError: null
   });
 
-  const parsed = parseReportMessage(message.text, config.defaultReportYear, message.date);
+  const parsed = parseIncomingTelegramMessage(message.text, config.defaultReportYear, message.date);
   const firstLine = String(message.text || '').split(/\r?\n/).find((line) => line.trim())?.trim() || '';
 
   if (!parsed.ok) {
@@ -77,9 +92,22 @@ async function processMessage(ctx, messageKind = 'message') {
     return;
   }
 
+  if (parsed.mode === 'expense_only') {
+    await upsertOwnerExpenseMessage(parsed, messageRow.id, {
+      chatId: message.chat.id,
+      messageId: message.message_id
+    });
+    await updateMessageParseResult(messageRow.id, 'valid', null);
+    await ctx.reply(formatExpenseOnlySuccess(parsed), {
+      reply_to_message_id: message.message_id,
+      allow_sending_without_reply: true
+    });
+    return;
+  }
+
   await upsertEmployeeReport(parsed, messageRow.id);
   await updateMessageParseResult(messageRow.id, 'valid', null);
-  await ctx.reply(formatSuccess(parsed), {
+  await ctx.reply(formatFullReportSuccess(parsed), {
     reply_to_message_id: message.message_id,
     allow_sending_without_reply: true
   });

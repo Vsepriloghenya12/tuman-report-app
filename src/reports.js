@@ -262,6 +262,73 @@ export async function getRecentMessages(limit = 50) {
 }
 
 
+export async function upsertOwnerExpenseMessage(parsed, messageRowId, telegramMessageMeta = {}) {
+  return withTransaction(async (client) => {
+    let reportResult = await client.query(`SELECT * FROM daily_reports WHERE report_date = $1 LIMIT 1`, [parsed.date.isoDate]);
+    let report = reportResult.rows[0] || null;
+
+    if (!report) {
+      const inserted = await client.query(
+        `
+          INSERT INTO daily_reports (
+            report_date, report_month, cash, rubles, bank_cards, yandex_delivery,
+            qr_code, total_income, cash_left, expense_total, last_message_id, source_type
+          ) VALUES ($1,$2,0,0,0,0,0,0,0,0,$3,'owner')
+          RETURNING *
+        `,
+        [parsed.date.isoDate, parsed.date.monthKey, messageRowId]
+      );
+      report = inserted.rows[0];
+    } else {
+      const updated = await client.query(
+        `UPDATE daily_reports SET last_message_id = $2, updated_at = NOW() WHERE id = $1 RETURNING *`,
+        [report.id, messageRowId]
+      );
+      report = updated.rows[0];
+    }
+
+    const prefix = `tg:${telegramMessageMeta.chatId || ''}:${telegramMessageMeta.messageId || ''}:`;
+    await client.query(
+      `DELETE FROM expense_lines WHERE report_id = $1 AND source = 'owner' AND raw_text LIKE $2`,
+      [report.id, `${prefix}%`]
+    );
+
+    let nextSortResult = await client.query(
+      `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM expense_lines WHERE report_id = $1`,
+      [report.id]
+    );
+    let nextSort = Number(nextSortResult.rows[0].next_sort || 0);
+
+    for (const expense of parsed.expenses) {
+      await client.query(
+        `
+          INSERT INTO expense_lines (report_id, amount, category, comment, source, raw_text, sort_order)
+          VALUES ($1,$2,$3,$4,'owner',$5,$6)
+        `,
+        [
+          report.id,
+          expense.amount,
+          expense.category,
+          expense.comment || '',
+          `${prefix}${expense.rawText || expense.comment || ''}`,
+          nextSort
+        ]
+      );
+      nextSort += 1;
+    }
+
+    const sumResult = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM expense_lines WHERE report_id = $1`,
+      [report.id]
+    );
+    const total = Number(sumResult.rows[0].total || 0);
+    await client.query(`UPDATE daily_reports SET expense_total = $2, updated_at = NOW() WHERE id = $1`, [report.id, total]);
+
+    return report;
+  });
+}
+
+
 export async function replaceCategoryExpenseCell(isoDate, monthKey, expense) {
   return withTransaction(async (client) => {
     let reportResult = await client.query(`SELECT * FROM daily_reports WHERE report_date = $1 LIMIT 1`, [isoDate]);

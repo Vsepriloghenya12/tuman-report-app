@@ -62,7 +62,7 @@ function splitExpenseLine(line) {
   return null;
 }
 
-function parseExpenseLine(line) {
+export function parseExpenseLine(line) {
   const categoryMatch = String(line || '').trim().match(/^(.*?)\s*\(([^()]+)\)\s*$/u);
 
   if (!categoryMatch) {
@@ -97,7 +97,6 @@ function parseExpenseLine(line) {
   };
 }
 
-
 function dateInfoFromParts(day, month, year) {
   if (day < 1 || day > 31 || month < 1 || month > 12) return null;
 
@@ -110,7 +109,7 @@ function dateInfoFromParts(day, month, year) {
   return { day, month, year, isoDate, monthKey };
 }
 
-function parseFallbackDate(fallbackDateLike, defaultYear) {
+export function parseFallbackDate(fallbackDateLike, defaultYear) {
   if (!fallbackDateLike && fallbackDateLike !== 0) return null;
 
   if (typeof fallbackDateLike === 'number' && Number.isFinite(fallbackDateLike)) {
@@ -125,7 +124,7 @@ function parseFallbackDate(fallbackDateLike, defaultYear) {
   return dateInfoFromParts(date.getUTCDate(), date.getUTCMonth() + 1, date.getUTCFullYear() || defaultYear);
 }
 
-function parseDate(firstLine, defaultYear) {
+export function parseDate(firstLine, defaultYear) {
   const match = firstLine.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
   if (!match) return null;
 
@@ -136,7 +135,7 @@ function parseDate(firstLine, defaultYear) {
   return dateInfoFromParts(day, month, year);
 }
 
-export function parseReportMessage(text, defaultYear, fallbackDateLike = null) {
+export function parseFullReportMessage(text, defaultYear, fallbackDateLike = null) {
   const sourceText = String(text || '').replace(/\r/g, '');
   const rawLines = sourceText.split('\n');
   const lines = rawLines.map((line) => line.trim());
@@ -229,6 +228,7 @@ export function parseReportMessage(text, defaultYear, fallbackDateLike = null) {
 
   return {
     ok: true,
+    mode: 'full_report',
     date: dateInfo,
     cash: {
       cash: fields.cash,
@@ -242,4 +242,99 @@ export function parseReportMessage(text, defaultYear, fallbackDateLike = null) {
     },
     expenses
   };
+}
+
+function looksLikeFullReport(lines) {
+  const reportLabels = [
+    'наличные',
+    'рубли',
+    'банковские карты',
+    'яндекс доставка',
+    'нет монет',
+    'общая',
+    'расходы:',
+    'итого расход',
+    'итог'
+  ];
+
+  return lines.some((line) => {
+    const normalized = String(line || '').trim().toLowerCase();
+    return reportLabels.some((label) => normalized === label || normalized.startsWith(`${label}:`));
+  });
+}
+
+function looksLikeExpenseOnly(lines) {
+  const meaningful = (lines || []).filter(Boolean);
+  if (!meaningful.length) return false;
+
+  const linesWithoutLeadingDate = parseDate(meaningful[0], new Date().getUTCFullYear())
+    ? meaningful.slice(1)
+    : meaningful;
+
+  if (!linesWithoutLeadingDate.length) return false;
+
+  return linesWithoutLeadingDate.every((line) => /\([^()]+\)\s*$/u.test(String(line || '').trim()));
+}
+
+export function parseExpenseOnlyMessage(text, defaultYear, fallbackDateLike = null) {
+  const sourceText = String(text || '').replace(/\r/g, '');
+  const rawLines = sourceText.split('\n');
+  const lines = rawLines.map((line) => line.trim());
+  const meaningfulLines = lines.filter(Boolean);
+
+  if (!meaningfulLines.length) {
+    return { ok: false, errors: ['Сообщение пустое.'] };
+  }
+
+  const explicitDate = parseDate(meaningfulLines[0], defaultYear);
+  const fallbackDate = parseFallbackDate(fallbackDateLike, defaultYear);
+  const dateInfo = explicitDate || fallbackDate;
+  if (!dateInfo) {
+    return {
+      ok: false,
+      errors: ['Не удалось определить дату расхода. Укажи дату первой строкой в формате ДД.ММ или отправь сообщение с корректным временем в Telegram.']
+    };
+  }
+
+  const expenseLines = (explicitDate ? meaningfulLines.slice(1) : meaningfulLines).filter(Boolean);
+  if (!expenseLines.length) {
+    return {
+      ok: false,
+      errors: ['После даты не найдено ни одной строки расхода. Используй формат: Андрей 50 аванс(зп).']
+    };
+  }
+
+  const expenses = [];
+  const errors = [];
+
+  for (const expenseLine of expenseLines) {
+    const parsedExpense = parseExpenseLine(expenseLine);
+    if (parsedExpense.error) {
+      errors.push(parsedExpense.error);
+    } else {
+      expenses.push(parsedExpense);
+    }
+  }
+
+  if (errors.length) {
+    return { ok: false, errors };
+  }
+
+  return {
+    ok: true,
+    mode: 'expense_only',
+    date: dateInfo,
+    expenses
+  };
+}
+
+export function parseIncomingTelegramMessage(text, defaultYear, fallbackDateLike = null) {
+  const sourceText = String(text || '').replace(/\r/g, '');
+  const lines = sourceText.split('\n').map((line) => line.trim()).filter(Boolean);
+
+  if (looksLikeFullReport(lines)) {
+    return parseFullReportMessage(text, defaultYear, fallbackDateLike);
+  }
+
+  return parseExpenseOnlyMessage(text, defaultYear, fallbackDateLike);
 }
