@@ -84,14 +84,8 @@ function parseExpenseLine(line) {
   };
 }
 
-function parseDate(firstLine, defaultYear) {
-  const match = firstLine.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
-  if (!match) return null;
 
-  const day = Number(match[1]);
-  const month = Number(match[2]);
-  const year = match[3] ? Number(match[3].length === 2 ? `20${match[3]}` : match[3]) : defaultYear;
-
+function dateInfoFromParts(day, month, year) {
   if (day < 1 || day > 31 || month < 1 || month > 12) return null;
 
   const date = new Date(Date.UTC(year, month - 1, day));
@@ -103,7 +97,33 @@ function parseDate(firstLine, defaultYear) {
   return { day, month, year, isoDate, monthKey };
 }
 
-export function parseReportMessage(text, defaultYear) {
+function parseFallbackDate(fallbackDateLike, defaultYear) {
+  if (!fallbackDateLike && fallbackDateLike !== 0) return null;
+
+  if (typeof fallbackDateLike === 'number' && Number.isFinite(fallbackDateLike)) {
+    const milliseconds = fallbackDateLike < 1e12 ? fallbackDateLike * 1000 : fallbackDateLike;
+    const date = new Date(milliseconds);
+    if (Number.isNaN(date.getTime())) return null;
+    return dateInfoFromParts(date.getUTCDate(), date.getUTCMonth() + 1, date.getUTCFullYear());
+  }
+
+  const date = new Date(fallbackDateLike);
+  if (Number.isNaN(date.getTime())) return null;
+  return dateInfoFromParts(date.getUTCDate(), date.getUTCMonth() + 1, date.getUTCFullYear() || defaultYear);
+}
+
+function parseDate(firstLine, defaultYear) {
+  const match = firstLine.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = match[3] ? Number(match[3].length === 2 ? `20${match[3]}` : match[3]) : defaultYear;
+
+  return dateInfoFromParts(day, month, year);
+}
+
+export function parseReportMessage(text, defaultYear, fallbackDateLike = null) {
   const sourceText = String(text || '').replace(/\r/g, '');
   const rawLines = sourceText.split('\n');
   const lines = rawLines.map((line) => line.trim());
@@ -113,11 +133,13 @@ export function parseReportMessage(text, defaultYear) {
     return { ok: false, errors: ['Сообщение пустое.'] };
   }
 
-  const dateInfo = parseDate(meaningfulLines[0], defaultYear);
+  const explicitDate = parseDate(meaningfulLines[0], defaultYear);
+  const fallbackDate = parseFallbackDate(fallbackDateLike, defaultYear);
+  const dateInfo = explicitDate || fallbackDate;
   if (!dateInfo) {
     return {
       ok: false,
-      errors: ['Не удалось определить дату. Первая строка должна быть в формате ДД.ММ, например 30.03.']
+      errors: ['Не удалось определить дату. Укажи дату первой строкой в формате ДД.ММ или отправь сообщение с корректным временем в Telegram.']
     };
   }
 

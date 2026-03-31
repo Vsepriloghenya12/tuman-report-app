@@ -12,6 +12,7 @@ import {
   getRecentMessages,
   getReportByDate,
   recalculateReportExpenseTotal,
+  replaceCategoryExpenseCell,
   updateExpense,
   upsertOwnerCash
 } from './reports.js';
@@ -90,6 +91,36 @@ app.put('/api/reports/:date/cash', requireOwner, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Не удалось сохранить кассу.' });
+  }
+});
+
+
+app.put('/api/reports/:date/expense-cells', requireOwner, async (req, res) => {
+  try {
+    const category = normalizeCategory(req.body?.category);
+    if (!ALL_CATEGORIES.includes(category)) {
+      return res.status(400).json({ error: 'Неизвестная категория расхода.' });
+    }
+
+    const isoDate = req.params.date;
+    const [year, month] = isoDate.split('-');
+    const monthKey = `${year}-${month}`;
+    const amountRaw = String(req.body?.amount ?? '').trim();
+    const amount = amountRaw === '' ? 0 : Number(amountRaw);
+    if (!Number.isFinite(amount) || amount < 0) {
+      return res.status(400).json({ error: 'Сумма расхода должна быть числом 0 или больше.' });
+    }
+
+    const report = await replaceCategoryExpenseCell(isoDate, monthKey, {
+      amount,
+      category,
+      comment: String(req.body?.comment || '').trim()
+    });
+
+    return res.json({ ok: true, report });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Не удалось сохранить ячейку расхода.' });
   }
 });
 

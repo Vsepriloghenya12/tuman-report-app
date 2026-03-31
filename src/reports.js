@@ -260,3 +260,58 @@ export async function getRecentMessages(limit = 50) {
   );
   return result.rows;
 }
+
+
+export async function replaceCategoryExpenseCell(isoDate, monthKey, expense) {
+  return withTransaction(async (client) => {
+    let reportResult = await client.query(`SELECT * FROM daily_reports WHERE report_date = $1 LIMIT 1`, [isoDate]);
+    let report = reportResult.rows[0] || null;
+
+    if (!report && !(Number(expense.amount || 0) > 0 || String(expense.comment || '').trim())) {
+      return null;
+    }
+
+    if (!report) {
+      const inserted = await client.query(
+        `
+          INSERT INTO daily_reports (
+            report_date, report_month, cash, rubles, bank_cards, yandex_delivery,
+            qr_code, total_income, cash_left, expense_total, source_type
+          ) VALUES ($1,$2,0,0,0,0,0,0,0,0,'owner')
+          RETURNING *
+        `,
+        [isoDate, monthKey]
+      );
+      report = inserted.rows[0];
+    }
+
+    await client.query(`DELETE FROM expense_lines WHERE report_id = $1 AND category = $2`, [report.id, expense.category]);
+
+    const amount = Number(expense.amount || 0);
+    const comment = String(expense.comment || '').trim();
+
+    if (amount > 0 || comment) {
+      const sortOrderResult = await client.query(
+        `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM expense_lines WHERE report_id = $1`,
+        [report.id]
+      );
+      const nextSort = Number(sortOrderResult.rows[0].next_sort || 0);
+      await client.query(
+        `
+          INSERT INTO expense_lines (report_id, amount, category, comment, source, raw_text, sort_order)
+          VALUES ($1,$2,$3,$4,'owner',$5,$6)
+        `,
+        [report.id, amount, expense.category, comment, comment, nextSort]
+      );
+    }
+
+    const sumResult = await client.query(
+      `SELECT COALESCE(SUM(amount), 0) AS total FROM expense_lines WHERE report_id = $1`,
+      [report.id]
+    );
+    const total = Number(sumResult.rows[0].total || 0);
+    await client.query(`UPDATE daily_reports SET expense_total = $2, updated_at = NOW() WHERE id = $1`, [report.id, total]);
+
+    return report;
+  });
+}

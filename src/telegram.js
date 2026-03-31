@@ -65,7 +65,7 @@ async function processMessage(ctx, messageKind = 'message') {
     parseError: null
   });
 
-  const parsed = parseReportMessage(message.text, config.defaultReportYear);
+  const parsed = parseReportMessage(message.text, config.defaultReportYear, message.date);
   const firstLine = String(message.text || '').split(/\r?\n/).find((line) => line.trim())?.trim() || '';
 
   if (!parsed.ok) {

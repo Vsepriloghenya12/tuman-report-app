@@ -229,6 +229,35 @@ label span {
   min-width: 150px;
   white-space: normal;
 }
+
+.excel-table tbody tr.is-saving td,
+.excel-table tbody tr.is-saving th.row-head {
+  background: #eef6ff !important;
+}
+.cell-input {
+  width: 100%;
+  min-width: 72px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  outline: none;
+  box-shadow: none;
+}
+.cell-input--text {
+  min-width: 150px;
+}
+.cell-input:hover {
+  border-color: #c7d2e3;
+  background: #fbfdff;
+}
+.cell-input:focus {
+  border-color: #7aa2ff;
+  background: #ffffff;
+}
+.comment-cell .cell-input {
+  white-space: normal;
+}
 .totals-row td,
 .totals-row th {
   background: #f5f8ff !important;

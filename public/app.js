@@ -155,6 +155,18 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;');
 }
 
+function escapeAttr(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function editableNumberValue(value) {
+  return value == null || value === '' ? '' : String(value);
+}
+
 function renderTopStrip() {
   const totalIncome = sumField('total_income');
   const totalExpense = sumField('expense_total');
@@ -192,7 +204,8 @@ function renderSheetTabs() {
 
 function bindSelectableRows() {
   sheetViewport.querySelectorAll('tr[data-date]').forEach((row) => {
-    row.addEventListener('click', () => {
+    row.addEventListener('click', (event) => {
+      if (event.target.closest('input, select, textarea, button')) return;
       selectDay(row.dataset.date);
     });
   });
@@ -205,6 +218,76 @@ function renderSheet() {
   if (state.activeSheet === 'зп') renderSalarySheet();
 }
 
+
+async function saveCashInlineRow(isoDate) {
+  const row = sheetViewport.querySelector(`tr[data-date="${isoDate}"]`);
+  if (!row) return;
+  row.classList.add('is-saving');
+  try {
+    await api(`/api/reports/${isoDate}/cash`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        cash: row.querySelector('[data-field="cash"]')?.value || 0,
+        rubles: row.querySelector('[data-field="rubles"]')?.value || 0,
+        bankCards: row.querySelector('[data-field="bankCards"]')?.value || 0,
+        yandexDelivery: row.querySelector('[data-field="yandexDelivery"]')?.value || 0,
+        qrCode: row.querySelector('[data-field="qrCode"]')?.value || 0,
+        totalIncome: row.querySelector('[data-field="totalIncome"]')?.value || 0,
+        cashLeft: row.querySelector('[data-field="cashLeft"]')?.value || 0,
+        expenseTotal: getReportByDate(isoDate)?.expense_total || 0
+      })
+    });
+    await loadMonth();
+    selectDay(isoDate);
+  } catch (error) {
+    row.classList.remove('is-saving');
+    alert(error.message);
+  }
+}
+
+async function saveExpenseInlineCell(isoDate, category) {
+  const amountInput = sheetViewport.querySelector(`[data-inline-kind="expense-amount"][data-date="${isoDate}"][data-category="${category}"]`);
+  const commentInput = sheetViewport.querySelector(`[data-inline-kind="expense-comment"][data-date="${isoDate}"][data-category="${category}"]`);
+  if (!amountInput || !commentInput) return;
+  const row = amountInput.closest('tr');
+  row?.classList.add('is-saving');
+  try {
+    await api(`/api/reports/${isoDate}/expense-cells`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        category,
+        amount: amountInput.value,
+        comment: commentInput.value
+      })
+    });
+    await loadMonth();
+    selectDay(isoDate);
+  } catch (error) {
+    row?.classList.remove('is-saving');
+    alert(error.message);
+  }
+}
+
+function bindInlineEditors() {
+  sheetViewport.querySelectorAll('.cell-input').forEach((input) => {
+    input.addEventListener('click', (event) => event.stopPropagation());
+    input.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        input.blur();
+      }
+    });
+  });
+
+  sheetViewport.querySelectorAll('[data-inline-kind="cash"]').forEach((input) => {
+    input.addEventListener('blur', () => saveCashInlineRow(input.dataset.date));
+  });
+
+  sheetViewport.querySelectorAll('[data-inline-kind="expense-amount"], [data-inline-kind="expense-comment"]').forEach((input) => {
+    input.addEventListener('blur', () => saveExpenseInlineCell(input.dataset.date, input.dataset.category));
+  });
+}
+
 function renderCashSheet() {
   const daysCount = getDaysCount(state.month);
   const rows = [];
@@ -214,13 +297,13 @@ function renderCashSheet() {
     rows.push(`
       <tr data-date="${isoDate}" class="${state.selectedDate === isoDate ? 'is-selected' : ''}">
         <th class="row-head">${day}</th>
-        <td>${formatSheetMoney(report?.cash)}</td>
-        <td>${formatSheetMoney(report?.rubles)}</td>
-        <td>${formatSheetMoney(report?.bank_cards)}</td>
-        <td>${formatSheetMoney(report?.yandex_delivery)}</td>
-        <td>${formatSheetMoney(report?.qr_code)}</td>
-        <td>${formatSheetMoney(report?.total_income)}</td>
-        <td>${formatSheetMoney(report?.cash_left)}</td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="cash" data-date="${isoDate}" data-field="cash" type="number" step="0.01" value="${escapeAttr(editableNumberValue(report?.cash))}" /></td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="cash" data-date="${isoDate}" data-field="rubles" type="number" step="0.01" value="${escapeAttr(editableNumberValue(report?.rubles))}" /></td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="cash" data-date="${isoDate}" data-field="bankCards" type="number" step="0.01" value="${escapeAttr(editableNumberValue(report?.bank_cards))}" /></td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="cash" data-date="${isoDate}" data-field="yandexDelivery" type="number" step="0.01" value="${escapeAttr(editableNumberValue(report?.yandex_delivery))}" /></td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="cash" data-date="${isoDate}" data-field="qrCode" type="number" step="0.01" value="${escapeAttr(editableNumberValue(report?.qr_code))}" /></td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="cash" data-date="${isoDate}" data-field="totalIncome" type="number" step="0.01" value="${escapeAttr(editableNumberValue(report?.total_income))}" /></td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="cash" data-date="${isoDate}" data-field="cashLeft" type="number" step="0.01" value="${escapeAttr(editableNumberValue(report?.cash_left))}" /></td>
       </tr>
     `);
   }
@@ -259,6 +342,7 @@ function renderCashSheet() {
     </div>
   `;
   bindSelectableRows();
+  bindInlineEditors();
 }
 
 function renderExpenseSheet() {
@@ -270,9 +354,10 @@ function renderExpenseSheet() {
     const groups = getReportExpenseGroups(report);
     const cells = CATEGORY_LAYOUT.map((category) => {
       const item = groups.get(category.key);
+      const commentValue = item?.comments?.join('; ') || '';
       return `
-        <td>${formatSheetMoney(item?.amount)}</td>
-        <td class="comment-cell">${escapeHtml(item?.comments?.join('; ') || '')}</td>
+        <td><input class="cell-input cell-input--number" data-inline-kind="expense-amount" data-date="${isoDate}" data-category="${escapeAttr(category.key)}" type="number" step="0.01" value="${escapeAttr(editableNumberValue(item?.amount))}" /></td>
+        <td class="comment-cell"><input class="cell-input cell-input--text" data-inline-kind="expense-comment" data-date="${isoDate}" data-category="${escapeAttr(category.key)}" type="text" value="${escapeAttr(commentValue)}" /></td>
       `;
     }).join('');
 
@@ -316,6 +401,7 @@ function renderExpenseSheet() {
     </div>
   `;
   bindSelectableRows();
+  bindInlineEditors();
 }
 
 function ratio(value, base) {
