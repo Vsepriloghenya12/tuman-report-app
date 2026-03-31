@@ -46,6 +46,19 @@ function splitExpenseLine(line) {
     };
   }
 
+  const amountMiddle = trimmed.match(/^(.*?)\s*(\d+(?:[.,]\d+)?)\s*(.*?)$/u);
+  if (amountMiddle && (amountMiddle[1].trim() || amountMiddle[3].trim())) {
+    const before = amountMiddle[1].trim();
+    const after = amountMiddle[3].trim();
+    const remainder = [before, after].filter(Boolean).join(' ').trim();
+    if (remainder) {
+      return {
+        amount: amountMiddle[2],
+        remainder
+      };
+    }
+  }
+
   return null;
 }
 
