@@ -352,12 +352,38 @@ export async function replaceCategoryExpenseCell(isoDate, monthKey, expense) {
       report = inserted.rows[0];
     }
 
-    await client.query(`DELETE FROM expense_lines WHERE report_id = $1 AND category = $2`, [report.id, expense.category]);
-
     const amount = Number(expense.amount || 0);
     const comment = String(expense.comment || '').trim();
+    const shouldPersist = amount > 0 || comment;
 
-    if (amount > 0 || comment) {
+    const existingRowsResult = await client.query(
+      `SELECT * FROM expense_lines WHERE report_id = $1 AND category = $2 ORDER BY sort_order ASC, id ASC`,
+      [report.id, expense.category]
+    );
+    const existingRows = existingRowsResult.rows;
+
+    const canReplaceCell = existingRows.length === 0 || (existingRows.length === 1 && existingRows[0].source === 'owner');
+    if (!canReplaceCell) {
+      const error = new Error(
+        'В этой ячейке несколько исходных строк или есть данные из сообщения сотрудника. Чтобы не потерять детали, редактируй расходы ниже по списку.'
+      );
+      error.code = 'EXPENSE_CELL_LOCKED';
+      throw error;
+    }
+
+    const existingRow = existingRows[0] || null;
+    if (existingRow && shouldPersist) {
+      await client.query(
+        `
+          UPDATE expense_lines
+          SET amount = $2, comment = $3, raw_text = $4, updated_at = NOW()
+          WHERE id = $1
+        `,
+        [existingRow.id, amount, comment, comment]
+      );
+    } else if (existingRow && !shouldPersist) {
+      await client.query(`DELETE FROM expense_lines WHERE id = $1`, [existingRow.id]);
+    } else if (!existingRow && shouldPersist) {
       const sortOrderResult = await client.query(
         `SELECT COALESCE(MAX(sort_order), -1) + 1 AS next_sort FROM expense_lines WHERE report_id = $1`,
         [report.id]

@@ -127,12 +127,25 @@ function getReportByDay(day) {
 function getReportExpenseGroups(report) {
   const groups = new Map();
   for (const expense of report?.expenses || []) {
-    const current = groups.get(expense.category) || { amount: 0, comments: [] };
+    const current = groups.get(expense.category) || {
+      amount: 0,
+      comments: [],
+      rowCount: 0,
+      hasEmployee: false,
+      hasOwner: false
+    };
     current.amount += Number(expense.amount || 0);
     if (expense.comment) current.comments.push(expense.comment);
+    current.rowCount += 1;
+    current.hasEmployee = current.hasEmployee || expense.source === 'employee';
+    current.hasOwner = current.hasOwner || expense.source === 'owner';
     groups.set(expense.category, current);
   }
   return groups;
+}
+
+function isExpenseCellEditable(group) {
+  return !group || (group.rowCount === 1 && group.hasOwner && !group.hasEmployee);
 }
 
 function sumCategoryMonth(category) {
@@ -355,6 +368,12 @@ function renderExpenseSheet() {
     const cells = CATEGORY_LAYOUT.map((category) => {
       const item = groups.get(category.key);
       const commentValue = item?.comments?.join('; ') || '';
+      if (!isExpenseCellEditable(item)) {
+        return `
+          <td class="cell-readonly">${formatSheetMoney(item?.amount)}</td>
+          <td class="comment-cell cell-readonly" title="Ячейка собрана из нескольких строк. Чтобы не потерять детали, редактируй расходы ниже по списку.">${escapeHtml(commentValue)}</td>
+        `;
+      }
       return `
         <td><input class="cell-input cell-input--number" data-inline-kind="expense-amount" data-date="${isoDate}" data-category="${escapeAttr(category.key)}" type="number" step="0.01" value="${escapeAttr(editableNumberValue(item?.amount))}" /></td>
         <td class="comment-cell"><input class="cell-input cell-input--text" data-inline-kind="expense-comment" data-date="${isoDate}" data-category="${escapeAttr(category.key)}" type="text" value="${escapeAttr(commentValue)}" /></td>
@@ -376,7 +395,7 @@ function renderExpenseSheet() {
   `).join('');
 
   sheetViewport.innerHTML = `
-    <div class="sheet-caption">Лист «Расход» — те же пары колонок: сумма / комментарий.</div>
+    <div class="sheet-caption">Лист «Расход» — те же пары колонок: сумма / комментарий. Ячейки, собранные из нескольких строк или из сообщений сотрудников, защищены от inline-правки: редактируй их через список расходов ниже.</div>
     <div class="sheet-scroll">
       <table class="excel-table excel-table--expense">
         <thead>

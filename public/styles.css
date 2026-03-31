@@ -234,6 +234,10 @@ label span {
 .excel-table tbody tr.is-saving th.row-head {
   background: #eef6ff !important;
 }
+.excel-table td.cell-readonly {
+  background: #f8fafc;
+  color: var(--muted);
+}
 .cell-input {
   width: 100%;
   min-width: 72px;

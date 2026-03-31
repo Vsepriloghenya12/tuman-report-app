@@ -119,6 +119,9 @@ app.put('/api/reports/:date/expense-cells', requireOwner, async (req, res) => {
 
     return res.json({ ok: true, report });
   } catch (error) {
+    if (error?.code === 'EXPENSE_CELL_LOCKED') {
+      return res.status(409).json({ error: error.message });
+    }
     console.error(error);
     return res.status(500).json({ error: 'Не удалось сохранить ячейку расхода.' });
   }
