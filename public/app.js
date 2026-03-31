@@ -2,24 +2,46 @@ const state = {
   month: new Date().toISOString().slice(0, 7),
   reports: [],
   messages: [],
-  selectedDate: null
+  selectedDate: null,
+  activeSheet: 'Касса'
 };
 
-const ALL_CATEGORIES = [
-  'закуп', 'зп', 'оплата поставщики', 'маркетинг', 'связь, интернет', 'посуда', 'мбп зал', 'форма',
-  'полиграфия', 'доставка', 'услуги контрагентов', 'сервис', 'призы', 'чай', 'покупка оборудования',
-  'ремонт оборудования', 'коммунальные услуги', 'аренда жилья', 'крыша', 'развлекательная программа',
-  'аренда', 'декор', 'аптека'
+const CATEGORY_LAYOUT = [
+  { key: 'закуп', label: 'Закуп' },
+  { key: 'зп', label: 'зп' },
+  { key: 'оплата поставщики', label: 'оплата поставщики' },
+  { key: 'маркетинг', label: 'маркетинг' },
+  { key: 'связь, интернет', label: 'связь, интернет' },
+  { key: 'посуда', label: 'посуда' },
+  { key: 'мбп зал', label: 'МБП зал' },
+  { key: 'форма', label: 'форма' },
+  { key: 'полиграфия', label: 'Полиграфия' },
+  { key: 'доставка', label: 'доставка' },
+  { key: 'услуги контрагентов', label: 'Услуги контрагентов' },
+  { key: 'сервис', label: 'сервис' },
+  { key: 'призы', label: 'призы' },
+  { key: 'чай', label: 'чай' },
+  { key: 'покупка оборудования', label: 'Покупка оборудования' },
+  { key: 'ремонт оборудования', label: 'Ремонт оборудования' },
+  { key: 'коммунальные услуги', label: 'Коммунальные услуги' },
+  { key: 'аренда жилья', label: 'Аренда жилья' },
+  { key: 'крыша', label: 'крыша' },
+  { key: 'развлекательная программа', label: 'Развлекательная программа' },
+  { key: 'аренда', label: 'аренда' },
+  { key: 'декор', label: 'декор' },
+  { key: 'аптека', label: 'аптека' }
 ];
+const ALL_CATEGORIES = CATEGORY_LAYOUT.map((item) => item.key);
+const SHEETS = ['Касса', 'Расход', 'Сводная', 'зп'];
 
 const loginScreen = document.getElementById('loginScreen');
 const appScreen = document.getElementById('appScreen');
 const loginForm = document.getElementById('loginForm');
 const loginError = document.getElementById('loginError');
 const monthPicker = document.getElementById('monthPicker');
-const kpiGrid = document.getElementById('kpiGrid');
-const cashTable = document.getElementById('cashTable');
-const expenseMatrix = document.getElementById('expenseMatrix');
+const kpiStrip = document.getElementById('kpiStrip');
+const sheetTabs = document.getElementById('sheetTabs');
+const sheetViewport = document.getElementById('sheetViewport');
 const messagesList = document.getElementById('messagesList');
 const dayTitle = document.getElementById('dayTitle');
 const cashForm = document.getElementById('cashForm');
@@ -75,108 +97,366 @@ function formatMoney(value) {
   return Number(value || 0).toLocaleString('ru-RU');
 }
 
+function formatSheetMoney(value) {
+  const num = Number(value || 0);
+  return num ? formatMoney(num) : '';
+}
+
 function formatDateISO(iso) {
   const [year, month, day] = iso.split('-');
   return `${day}.${month}.${year}`;
+}
+
+function getDaysCount(monthKey) {
+  const [year, month] = monthKey.split('-').map(Number);
+  return new Date(year, month, 0).getDate();
+}
+
+function isoDateFromDay(day) {
+  return `${state.month}-${String(day).padStart(2, '0')}`;
 }
 
 function getReportByDate(date) {
   return state.reports.find((report) => report.report_date.startsWith(date)) || null;
 }
 
-function computeExpenseMap(report) {
-  const result = new Map();
-  for (const expense of report?.expenses || []) {
-    const key = expense.category;
-    const current = result.get(key) || 0;
-    result.set(key, current + Number(expense.amount || 0));
-  }
-  return result;
+function getReportByDay(day) {
+  return getReportByDate(isoDateFromDay(day));
 }
 
-function renderKpis() {
-  const totals = state.reports.reduce((acc, report) => {
-    acc.reports += 1;
-    acc.totalIncome += Number(report.total_income || 0);
-    acc.expenseTotal += Number(report.expense_total || 0);
-    acc.cashLeft += Number(report.cash_left || 0);
-    return acc;
-  }, { reports: 0, totalIncome: 0, expenseTotal: 0, cashLeft: 0 });
+function getReportExpenseGroups(report) {
+  const groups = new Map();
+  for (const expense of report?.expenses || []) {
+    const current = groups.get(expense.category) || { amount: 0, comments: [] };
+    current.amount += Number(expense.amount || 0);
+    if (expense.comment) current.comments.push(expense.comment);
+    groups.set(expense.category, current);
+  }
+  return groups;
+}
 
+function sumCategoryMonth(category) {
+  return state.reports.reduce((total, report) => {
+    for (const expense of report.expenses || []) {
+      if (expense.category === category) total += Number(expense.amount || 0);
+    }
+    return total;
+  }, 0);
+}
+
+function sumField(field) {
+  return state.reports.reduce((total, report) => total + Number(report[field] || 0), 0);
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+function renderTopStrip() {
+  const totalIncome = sumField('total_income');
+  const totalExpense = sumField('expense_total');
+  const cashLeft = sumField('cash_left');
+  const lastReport = [...state.reports].sort((a, b) => a.report_date.localeCompare(b.report_date)).at(-1);
   const items = [
-    ['Отчётов за месяц', totals.reports],
-    ['Общая выручка', formatMoney(totals.totalIncome)],
-    ['Общий расход', formatMoney(totals.expenseTotal)],
-    ['Остаток наличных', formatMoney(totals.cashLeft)]
+    ['Дней с отчётом', state.reports.length],
+    ['Общая выручка', formatMoney(totalIncome)],
+    ['Общий расход', formatMoney(totalExpense)],
+    ['Последний остаток наличных', formatMoney(lastReport?.cash_left || 0)],
+    ['Остаток наличных за месяц', formatMoney(cashLeft)]
   ];
 
-  kpiGrid.innerHTML = items.map(([label, value]) => `
-    <div class="kpi">
-      <div class="label">${label}</div>
-      <div class="value">${value}</div>
+  kpiStrip.innerHTML = items.map(([label, value]) => `
+    <div class="mini-kpi">
+      <div class="mini-kpi__label">${label}</div>
+      <div class="mini-kpi__value">${value}</div>
     </div>
   `).join('');
 }
 
-function renderCashTable() {
-  const rows = [];
-  for (let day = 1; day <= 31; day += 1) {
-    const isoDate = `${state.month}-${String(day).padStart(2, '0')}`;
-    const report = getReportByDate(isoDate);
-    rows.push(`
-      <tr data-date="${isoDate}" class="${state.selectedDate === isoDate ? 'is-selected' : ''}">
-        <td>${String(day).padStart(2, '0')}</td>
-        <td>${formatMoney(report?.cash)}</td>
-        <td>${formatMoney(report?.rubles)}</td>
-        <td>${formatMoney(report?.bank_cards)}</td>
-        <td>${formatMoney(report?.yandex_delivery)}</td>
-        <td>${formatMoney(report?.qr_code)}</td>
-        <td>${formatMoney(report?.total_income)}</td>
-        <td>${formatMoney(report?.cash_left)}</td>
-        <td>${formatMoney(report?.expense_total)}</td>
-      </tr>
-    `);
-  }
+function renderSheetTabs() {
+  sheetTabs.innerHTML = SHEETS.map((sheet) => `
+    <button class="sheet-tab ${sheet === state.activeSheet ? 'is-active' : ''}" data-sheet="${sheet}">${sheet}</button>
+  `).join('');
 
-  cashTable.innerHTML = `
-    <thead>
-      <tr>
-        <th>День</th>
-        <th>Наличные</th>
-        <th>Рубли</th>
-        <th>Карты</th>
-        <th>Яндекс</th>
-        <th>Нет монет</th>
-        <th>Общая</th>
-        <th>Осталось наличных</th>
-        <th>Итого расход</th>
-      </tr>
-    </thead>
-    <tbody>${rows.join('')}</tbody>
-  `;
+  sheetTabs.querySelectorAll('button[data-sheet]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.activeSheet = button.dataset.sheet;
+      renderSheetTabs();
+      renderSheet();
+    });
+  });
+}
 
-  cashTable.querySelectorAll('tbody tr').forEach((row) => {
+function bindSelectableRows() {
+  sheetViewport.querySelectorAll('tr[data-date]').forEach((row) => {
     row.addEventListener('click', () => {
       selectDay(row.dataset.date);
     });
   });
 }
 
-function renderExpenseMatrix() {
-  const headerCells = ALL_CATEGORIES.map((category) => `<th>${category}</th>`).join('');
-  const bodyRows = [];
+function renderSheet() {
+  if (state.activeSheet === 'Касса') renderCashSheet();
+  if (state.activeSheet === 'Расход') renderExpenseSheet();
+  if (state.activeSheet === 'Сводная') renderSummarySheet();
+  if (state.activeSheet === 'зп') renderSalarySheet();
+}
 
-  for (let day = 1; day <= 31; day += 1) {
-    const isoDate = `${state.month}-${String(day).padStart(2, '0')}`;
-    const report = getReportByDate(isoDate);
-    const expenseMap = computeExpenseMap(report);
-    const cells = ALL_CATEGORIES.map((category) => `<td>${formatMoney(expenseMap.get(category) || 0)}</td>`).join('');
-    bodyRows.push(`<tr><td>${String(day).padStart(2, '0')}</td>${cells}</tr>`);
+function renderCashSheet() {
+  const daysCount = getDaysCount(state.month);
+  const rows = [];
+  for (let day = 1; day <= daysCount; day += 1) {
+    const isoDate = isoDateFromDay(day);
+    const report = getReportByDay(day);
+    rows.push(`
+      <tr data-date="${isoDate}" class="${state.selectedDate === isoDate ? 'is-selected' : ''}">
+        <th class="row-head">${day}</th>
+        <td>${formatSheetMoney(report?.cash)}</td>
+        <td>${formatSheetMoney(report?.rubles)}</td>
+        <td>${formatSheetMoney(report?.bank_cards)}</td>
+        <td>${formatSheetMoney(report?.yandex_delivery)}</td>
+        <td>${formatSheetMoney(report?.qr_code)}</td>
+        <td>${formatSheetMoney(report?.total_income)}</td>
+        <td>${formatSheetMoney(report?.cash_left)}</td>
+      </tr>
+    `);
   }
 
-  expenseMatrix.innerHTML = `
-    <thead><tr><th>День</th>${headerCells}</tr></thead>
-    <tbody>${bodyRows.join('')}</tbody>
+  rows.push(`
+    <tr class="totals-row">
+      <th class="row-head">Итого</th>
+      <td>${formatSheetMoney(sumField('cash'))}</td>
+      <td>${formatSheetMoney(sumField('rubles'))}</td>
+      <td>${formatSheetMoney(sumField('bank_cards'))}</td>
+      <td>${formatSheetMoney(sumField('yandex_delivery'))}</td>
+      <td>${formatSheetMoney(sumField('qr_code'))}</td>
+      <td>${formatSheetMoney(sumField('total_income'))}</td>
+      <td>${formatSheetMoney(sumField('cash_left'))}</td>
+    </tr>
+  `);
+
+  sheetViewport.innerHTML = `
+    <div class="sheet-caption">Лист «Касса» — формат как в Excel. Последняя колонка: «Осталось наличных».</div>
+    <div class="sheet-scroll">
+      <table class="excel-table excel-table--cash">
+        <thead>
+          <tr>
+            <th class="corner-cell">День</th>
+            <th>наличные</th>
+            <th>рубли</th>
+            <th>бн</th>
+            <th>яндекс</th>
+            <th>кр код</th>
+            <th>общая</th>
+            <th>осталось наличных</th>
+          </tr>
+        </thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>
+  `;
+  bindSelectableRows();
+}
+
+function renderExpenseSheet() {
+  const daysCount = getDaysCount(state.month);
+  const rows = [];
+  for (let day = 1; day <= daysCount; day += 1) {
+    const isoDate = isoDateFromDay(day);
+    const report = getReportByDay(day);
+    const groups = getReportExpenseGroups(report);
+    const cells = CATEGORY_LAYOUT.map((category) => {
+      const item = groups.get(category.key);
+      return `
+        <td>${formatSheetMoney(item?.amount)}</td>
+        <td class="comment-cell">${escapeHtml(item?.comments?.join('; ') || '')}</td>
+      `;
+    }).join('');
+
+    rows.push(`
+      <tr data-date="${isoDate}" class="${state.selectedDate === isoDate ? 'is-selected' : ''}">
+        <th class="row-head">${day}</th>
+        ${cells}
+        <td>${formatSheetMoney(report?.expense_total)}</td>
+      </tr>
+    `);
+  }
+
+  const totalCells = CATEGORY_LAYOUT.map((category) => `
+    <td>${formatSheetMoney(sumCategoryMonth(category.key))}</td>
+    <td></td>
+  `).join('');
+
+  sheetViewport.innerHTML = `
+    <div class="sheet-caption">Лист «Расход» — те же пары колонок: сумма / комментарий.</div>
+    <div class="sheet-scroll">
+      <table class="excel-table excel-table--expense">
+        <thead>
+          <tr>
+            <th rowspan="2" class="corner-cell">Дата</th>
+            ${CATEGORY_LAYOUT.map((category) => `<th colspan="2">${category.label}</th>`).join('')}
+            <th rowspan="2">итого</th>
+          </tr>
+          <tr>
+            ${CATEGORY_LAYOUT.map(() => '<th>Сумма</th><th>Комментарий</th>').join('')}
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.join('')}
+          <tr class="totals-row">
+            <th class="row-head">Итого</th>
+            ${totalCells}
+            <td>${formatSheetMoney(sumField('expense_total'))}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  `;
+  bindSelectableRows();
+}
+
+function ratio(value, base) {
+  return base ? (Number(value || 0) / base).toLocaleString('ru-RU', { style: 'percent', minimumFractionDigits: 0, maximumFractionDigits: 0 }) : '';
+}
+
+function renderSummarySheet() {
+  const revenue = sumField('total_income');
+  const expense = sumField('expense_total');
+  const lastCashLeft = [...state.reports].sort((a, b) => a.report_date.localeCompare(b.report_date)).at(-1)?.cash_left || 0;
+  const serviceTea = sumCategoryMonth('сервис') + sumCategoryMonth('чай');
+  const summaryRows = [
+    ['Выручка', revenue, ''],
+    ['Расход', expense, ratio(expense, revenue)],
+    ['Закуп', sumCategoryMonth('закуп'), ratio(sumCategoryMonth('закуп'), revenue)],
+    ['доставка', sumCategoryMonth('доставка'), ratio(sumCategoryMonth('доставка'), revenue)],
+    ['зп', sumCategoryMonth('зп'), ratio(sumCategoryMonth('зп'), revenue)],
+    ['оплата поставщики', sumCategoryMonth('оплата поставщики'), ratio(sumCategoryMonth('оплата поставщики'), revenue)],
+    ['услуги контрагентов', sumCategoryMonth('услуги контрагентов'), ratio(sumCategoryMonth('услуги контрагентов'), revenue)],
+    ['Цветы и декор', sumCategoryMonth('декор'), ratio(sumCategoryMonth('декор'), revenue)],
+    ['МБП зал', sumCategoryMonth('мбп зал'), ratio(sumCategoryMonth('мбп зал'), revenue)],
+    ['Связь интернет', sumCategoryMonth('связь, интернет'), ratio(sumCategoryMonth('связь, интернет'), revenue)],
+    ['Полиграфия', sumCategoryMonth('полиграфия'), ratio(sumCategoryMonth('полиграфия'), revenue)],
+    ['развлекательная программа', sumCategoryMonth('развлекательная программа'), ratio(sumCategoryMonth('развлекательная программа'), revenue)],
+    ['форма', sumCategoryMonth('форма'), ratio(sumCategoryMonth('форма'), revenue)],
+    ['Покупка оборудования', sumCategoryMonth('покупка оборудования'), ratio(sumCategoryMonth('покупка оборудования'), revenue)],
+    ['Ремонт оборудования', sumCategoryMonth('ремонт оборудования'), ratio(sumCategoryMonth('ремонт оборудования'), revenue)],
+    ['Коммунальные расходы', sumCategoryMonth('коммунальные услуги'), ratio(sumCategoryMonth('коммунальные услуги'), revenue)],
+    ['Аренда жилья', sumCategoryMonth('аренда жилья'), ratio(sumCategoryMonth('аренда жилья'), revenue)],
+    ['Крыша', sumCategoryMonth('крыша'), ratio(sumCategoryMonth('крыша'), revenue)],
+    ['маркетинг', sumCategoryMonth('маркетинг'), ratio(sumCategoryMonth('маркетинг'), revenue)],
+    ['Услуги эквайринга', 0, ''],
+    ['сервис+чай', serviceTea, ratio(serviceTea, revenue)],
+    ['Аренда', sumCategoryMonth('аренда'), ratio(sumCategoryMonth('аренда'), revenue)],
+    ['посуда', sumCategoryMonth('посуда'), ratio(sumCategoryMonth('посуда'), revenue)],
+    ['аптека', sumCategoryMonth('аптека'), ratio(sumCategoryMonth('аптека'), revenue)]
+  ];
+
+  const rightRows = [
+    ['Баланс', formatSheetMoney(lastCashLeft)],
+    ['Активы', ''],
+    ['остаток наличных', formatSheetMoney(lastCashLeft)],
+    ['дней с отчётом', String(state.reports.length)],
+    ['общая выручка', formatSheetMoney(revenue)],
+    ['общий расход', formatSheetMoney(expense)],
+    ['Итого Активы', formatSheetMoney(lastCashLeft)],
+    ['Пассивы', ''],
+    ['зп', formatSheetMoney(sumCategoryMonth('зп'))],
+    ['поставщики', formatSheetMoney(sumCategoryMonth('оплата поставщики'))],
+    ['аренда', formatSheetMoney(sumCategoryMonth('аренда'))],
+    ['Итого Пассивы', formatSheetMoney(sumCategoryMonth('зп') + sumCategoryMonth('оплата поставщики') + sumCategoryMonth('аренда'))]
+  ];
+
+  sheetViewport.innerHTML = `
+    <div class="sheet-caption">Лист «Сводная» повторяет структуру исходной таблицы и собирает основные суммы из отчётов месяца.</div>
+    <div class="summary-grid">
+      <div class="sheet-scroll">
+        <table class="excel-table excel-table--summary">
+          <thead>
+            <tr><th colspan="3">туман</th></tr>
+            <tr><th>Показатель</th><th>Сумма</th><th>%</th></tr>
+          </thead>
+          <tbody>
+            ${summaryRows.map((row) => `
+              <tr>
+                <th class="summary-label">${row[0]}</th>
+                <td>${formatSheetMoney(row[1])}</td>
+                <td>${row[2]}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="sheet-scroll">
+        <table class="excel-table excel-table--summary-side">
+          <thead>
+            <tr><th colspan="2">Баланс / Активы / Пассивы</th></tr>
+            <tr><th>Показатель</th><th>Сумма</th></tr>
+          </thead>
+          <tbody>
+            ${rightRows.map((row) => `
+              <tr>
+                <th class="summary-label">${row[0]}</th>
+                <td>${row[1]}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function renderSalarySheet() {
+  const peopleMap = new Map();
+  for (const report of state.reports) {
+    const day = Number(report.report_date.slice(-2));
+    for (const expense of report.expenses || []) {
+      if (expense.category !== 'зп') continue;
+      const name = (expense.comment || 'Без имени').trim();
+      const byDay = peopleMap.get(name) || new Map();
+      byDay.set(day, (byDay.get(day) || 0) + Number(expense.amount || 0));
+      peopleMap.set(name, byDay);
+    }
+  }
+
+  const people = [...peopleMap.keys()].sort((a, b) => a.localeCompare(b, 'ru'));
+  const daysCount = getDaysCount(state.month);
+  const rows = [];
+
+  for (let day = 1; day <= daysCount; day += 1) {
+    const cells = people.map((name) => `<td>${formatSheetMoney(peopleMap.get(name)?.get(day) || 0)}</td>`).join('');
+    rows.push(`<tr><th class="row-head">${day}</th>${cells}<td>${formatSheetMoney((getReportByDay(day)?.expenses || []).filter((expense) => expense.category === 'зп').reduce((sum, expense) => sum + Number(expense.amount || 0), 0))}</td></tr>`);
+  }
+
+  const totals = people.map((name) => {
+    const total = [...(peopleMap.get(name)?.values() || [])].reduce((sum, value) => sum + value, 0);
+    return `<td>${formatSheetMoney(total)}</td>`;
+  }).join('');
+
+  sheetViewport.innerHTML = `
+    <div class="sheet-caption">Лист «зп» строится по выплатам категории «зп» и комментариям-именам.</div>
+    <div class="sheet-scroll">
+      <table class="excel-table excel-table--salary">
+        <thead>
+          <tr>
+            <th class="corner-cell">День</th>
+            ${people.length ? people.map((name) => `<th>${escapeHtml(name)}</th>`).join('') : '<th>Нет данных по зарплатам</th>'}
+            <th>Итого</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.join('')}
+          <tr class="totals-row">
+            <th class="row-head">Итого</th>
+            ${totals || '<td></td>'}
+            <td>${formatSheetMoney(sumCategoryMonth('зп'))}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   `;
 }
 
@@ -277,15 +557,8 @@ function renderDayDetails() {
 
 function selectDay(isoDate) {
   state.selectedDate = isoDate;
-  renderCashTable();
+  renderSheet();
   renderDayDetails();
-}
-
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
 }
 
 async function loadMessages() {
@@ -298,12 +571,11 @@ async function loadMonth() {
   const payload = await api(`/api/months/${state.month}`);
   state.reports = payload.reports;
   if (!state.selectedDate) {
-    const firstReport = state.reports[0];
-    state.selectedDate = firstReport?.report_date?.slice(0, 10) || `${state.month}-01`;
+    state.selectedDate = `${state.month}-01`;
   }
-  renderKpis();
-  renderCashTable();
-  renderExpenseMatrix();
+  renderTopStrip();
+  renderSheetTabs();
+  renderSheet();
   renderDayDetails();
   await loadMessages();
 }

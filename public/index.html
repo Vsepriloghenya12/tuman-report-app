@@ -8,7 +8,7 @@
   </head>
   <body>
     <div id="loginScreen" class="screen screen--centered">
-      <div class="card auth-card">
+      <div class="auth-card">
         <h1>Туман — отчёты</h1>
         <p class="muted">Вход владельца</p>
         <form id="loginForm" class="stack gap-12">
@@ -30,42 +30,38 @@
       <header class="topbar">
         <div>
           <h1>Туман — отчёты</h1>
-          <p class="muted">Сотрудники отправляют отчёты в группу, владелец дополняет редкие расходы вручную.</p>
+          <p class="muted">Вид отчёта повторяет структуру Excel: Касса, Расход, Сводная, зп.</p>
         </div>
         <div class="topbar-actions">
           <input id="monthPicker" type="month" />
+          <button id="refreshBtn" class="button">Обновить</button>
           <button id="downloadBtn" class="button button--primary">Скачать Excel</button>
           <button id="logoutBtn" class="button">Выйти</button>
         </div>
       </header>
 
       <main class="layout">
-        <section class="card kpi-grid" id="kpiGrid"></section>
+        <section class="workbook-card">
+          <div class="workbook-toolbar">
+            <div>
+              <h2>Отчёт владельца</h2>
+              <p class="muted">Выбери лист, как в исходном Excel-файле.</p>
+            </div>
+            <div id="kpiStrip" class="kpi-strip"></div>
+          </div>
 
-        <section class="card">
-          <div class="section-header">
-            <h2>Касса по дням</h2>
-            <button id="refreshBtn" class="button">Обновить</button>
-          </div>
-          <div class="table-wrap">
-            <table id="cashTable"></table>
-          </div>
-        </section>
+          <div id="sheetTabs" class="sheet-tabs"></div>
 
-        <section class="card">
-          <div class="section-header">
-            <h2>Расходы по категориям</h2>
-            <p class="muted">Широкая таблица. Прокручивается по горизонтали.</p>
-          </div>
-          <div class="table-wrap">
-            <table id="expenseMatrix"></table>
+          <div class="sheet-frame">
+            <div id="sheetViewport"></div>
           </div>
         </section>
 
         <section class="detail-grid">
-          <section class="card">
+          <section class="panel-card">
             <div class="section-header">
               <h2 id="dayTitle">День не выбран</h2>
+              <p class="muted">Кликни по строке в листе «Касса» или «Расход».</p>
             </div>
             <form id="cashForm" class="stack gap-12 hidden">
               <div class="form-grid">
@@ -82,9 +78,10 @@
             </form>
           </section>
 
-          <section class="card">
+          <section class="panel-card">
             <div class="section-header">
-              <h2>Расходы за день</h2>
+              <h2>Расходы за выбранный день</h2>
+              <p class="muted">Сотрудники присылают простые категории, остальное владелец добавляет вручную.</p>
             </div>
             <form id="expenseForm" class="stack gap-12 hidden">
               <div class="form-grid form-grid--compact">
@@ -98,7 +95,7 @@
           </section>
         </section>
 
-        <section class="card">
+        <section class="panel-card">
           <div class="section-header">
             <h2>Сообщения бота</h2>
             <p class="muted">Здесь видно, что было принято, а где бот попросил исправить сообщение.</p>
