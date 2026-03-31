@@ -1,12 +1,3 @@
-export const EMPLOYEE_CATEGORIES = [
-  'закуп',
-  'зп',
-  'доставка',
-  'сервис',
-  'чай',
-  'аптека'
-];
-
 export const ALL_CATEGORIES = [
   'закуп',
   'зп',
@@ -32,6 +23,25 @@ export const ALL_CATEGORIES = [
   'декор',
   'аптека'
 ];
+
+export const MESSAGE_CATEGORIES = [...ALL_CATEGORIES];
+
+export const CATEGORY_ALIASES = {
+  'связь интернет': 'связь, интернет',
+  'связь,интернет': 'связь, интернет',
+  'интернет': 'связь, интернет',
+  'связь': 'связь, интернет',
+  'мбп': 'мбп зал',
+  'контрагенты': 'услуги контрагентов',
+  'услуги контрагента': 'услуги контрагентов',
+  'ремонт оборудывания': 'ремонт оборудования',
+  'оборудование ремонт': 'ремонт оборудования',
+  'коммуналка': 'коммунальные услуги',
+  'развлекательная': 'развлекательная программа',
+  'дост': 'доставка',
+  'аванс': 'зп',
+  'зарплата': 'зп'
+};
 
 export const CATEGORY_COLUMN_MAP = {
   'закуп': { amount: 'B', comment: 'C', summaryLabel: 'Закуп' },
@@ -60,14 +70,16 @@ export const CATEGORY_COLUMN_MAP = {
 };
 
 export function normalizeCategory(input) {
-  return String(input || '')
+  const normalized = String(input || '')
     .trim()
     .toLowerCase()
     .replace(/ё/g, 'е')
     .replace(/\s+/g, ' ')
     .replace('связь, интерет', 'связь, интернет');
+
+  return CATEGORY_ALIASES[normalized] || normalized;
 }
 
-export function isAllowedEmployeeCategory(category) {
-  return EMPLOYEE_CATEGORIES.includes(normalizeCategory(category));
+export function isAllowedMessageCategory(category) {
+  return MESSAGE_CATEGORIES.includes(normalizeCategory(category));
 }

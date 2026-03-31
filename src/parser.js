@@ -1,4 +1,4 @@
-import { EMPLOYEE_CATEGORIES, isAllowedEmployeeCategory, normalizeCategory } from './categories.js';
+import { ALL_CATEGORIES, isAllowedMessageCategory, normalizeCategory } from './categories.js';
 
 function toNumber(raw) {
   if (raw == null) return NaN;
@@ -27,15 +27,30 @@ function extractLabelValue(lines, label) {
   return { value: null, index };
 }
 
-function parseExpenseLine(line) {
-  const amountMatch = line.match(/^(\d+(?:[.,]\d+)?)\s+(.+)$/u);
-  if (!amountMatch) {
-    return { error: `Не удалось прочитать сумму в строке: "${line}"` };
+function splitExpenseLine(line) {
+  const trimmed = String(line || '').trim();
+
+  const amountFirst = trimmed.match(/^(\d+(?:[.,]\d+)?)\s+(.+)$/u);
+  if (amountFirst) {
+    return {
+      amount: amountFirst[1],
+      remainder: amountFirst[2].trim()
+    };
   }
 
-  const amount = toNumber(amountMatch[1]);
-  const remainder = amountMatch[2].trim();
-  const categoryMatch = remainder.match(/^(.*?)\s*\(([^()]+)\)\s*$/u);
+  const amountLast = trimmed.match(/^(.+?)\s+(\d+(?:[.,]\d+)?)$/u);
+  if (amountLast) {
+    return {
+      amount: amountLast[2],
+      remainder: amountLast[1].trim()
+    };
+  }
+
+  return null;
+}
+
+function parseExpenseLine(line) {
+  const categoryMatch = String(line || '').trim().match(/^(.*?)\s*\(([^()]+)\)\s*$/u);
 
   if (!categoryMatch) {
     return {
@@ -43,12 +58,21 @@ function parseExpenseLine(line) {
     };
   }
 
-  const comment = categoryMatch[1].trim();
-  const category = normalizeCategory(categoryMatch[2]);
+  const beforeCategory = categoryMatch[1].trim();
+  const split = splitExpenseLine(beforeCategory);
 
-  if (!isAllowedEmployeeCategory(category)) {
+  if (!split) {
+    return { error: `Не удалось прочитать сумму в строке: "${line}"` };
+  }
+
+  const amount = toNumber(split.amount);
+  const comment = split.remainder.trim();
+  const sourceCategory = categoryMatch[2].trim();
+  const category = normalizeCategory(sourceCategory);
+
+  if (!isAllowedMessageCategory(category)) {
     return {
-      error: `Категория "${categoryMatch[2].trim()}" не принимается из сообщений сотрудников. Разрешены только: ${EMPLOYEE_CATEGORIES.join(', ')}.`
+      error: `Неизвестная категория "${sourceCategory}". Разрешены категории: ${ALL_CATEGORIES.join(', ')}.`
     };
   }
 
