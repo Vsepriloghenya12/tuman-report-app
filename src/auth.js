@@ -12,12 +12,13 @@ export function issueAuthCookie(res) {
     httpOnly: true,
     sameSite: 'lax',
     secure: false,
+    path: '/',
     maxAge: 30 * 24 * 60 * 60 * 1000
   });
 }
 
 export function clearAuthCookie(res) {
-  res.clearCookie(COOKIE_NAME);
+  res.clearCookie(COOKIE_NAME, { path: '/' });
 }
 
 export function requireOwner(req, res, next) {

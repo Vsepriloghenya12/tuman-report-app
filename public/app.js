@@ -59,6 +59,7 @@ for (const category of ALL_CATEGORIES) {
 
 async function api(url, options = {}) {
   const response = await fetch(url, {
+    credentials: 'same-origin',
     headers: {
       'Content-Type': 'application/json',
       ...(options.headers || {})
@@ -66,21 +67,18 @@ async function api(url, options = {}) {
     ...options
   });
 
-  if (response.status === 401) {
-    showLogin();
-    throw new Error('Нужна авторизация.');
-  }
+  const contentType = response.headers.get('content-type') || '';
+  const isJson = contentType.includes('application/json');
+  const payload = isJson ? await response.json().catch(() => null) : null;
 
   if (!response.ok) {
-    const payload = await response.json().catch(() => ({ error: 'Ошибка запроса.' }));
-    throw new Error(payload.error || 'Ошибка запроса.');
+    if (response.status === 401) {
+      showLogin();
+    }
+    throw new Error(payload?.error || (response.status === 401 ? 'Нужна авторизация.' : 'Ошибка запроса.'));
   }
 
-  const contentType = response.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) {
-    return response.json();
-  }
-  return response;
+  return isJson ? payload : response;
 }
 
 function showLogin() {
