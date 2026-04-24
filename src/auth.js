@@ -1,7 +1,25 @@
 import jwt from 'jsonwebtoken';
-import { config } from './config.js';
+import { config, DEFAULT_OWNER_PASSWORD, DEFAULT_JWT_SECRET } from './config.js';
 
 const COOKIE_NAME = 'tuman_owner_token';
+
+export function getAuthConfigurationError() {
+  const issues = [];
+
+  if (!config.ownerPassword || config.ownerPassword === DEFAULT_OWNER_PASSWORD) {
+    issues.push('OWNER_PASSWORD');
+  }
+
+  if (!config.jwtSecret || config.jwtSecret === DEFAULT_JWT_SECRET) {
+    issues.push('JWT_SECRET');
+  }
+
+  if (!issues.length) {
+    return null;
+  }
+
+  return `Вход владельца не настроен: задайте ${issues.join(' и ')} в переменных окружения сервера.`;
+}
 
 export function issueAuthCookie(res) {
   const token = jwt.sign({ role: 'owner', username: config.ownerUsername }, config.jwtSecret, {
@@ -37,5 +55,8 @@ export function requireOwner(req, res, next) {
 }
 
 export function validateCredentials(username, password) {
-  return username === config.ownerUsername && password === config.ownerPassword;
+  const normalizedUsername = String(username ?? '').trim();
+  const normalizedPassword = String(password ?? '');
+  const usernameMatches = !normalizedUsername || normalizedUsername === config.ownerUsername;
+  return usernameMatches && normalizedPassword === config.ownerPassword;
 }

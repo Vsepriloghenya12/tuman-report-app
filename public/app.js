@@ -690,7 +690,6 @@ loginForm.addEventListener('submit', async (event) => {
     await api('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({
-        username: loginForm.username.value.trim(),
         password: loginForm.password.value
       })
     });
@@ -775,8 +774,12 @@ async function bootstrap() {
     await api('/api/auth/me');
     showApp();
     await loadMonth();
-  } catch {
+  } catch (error) {
     showLogin();
+    if (error?.message && !['Нужна авторизация владельца.', 'Сессия истекла. Войди заново.', 'Нужна авторизация.'].includes(error.message)) {
+      loginError.textContent = error.message;
+      loginError.classList.remove('hidden');
+    }
   }
 }
 

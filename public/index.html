@@ -10,15 +10,11 @@
     <div id="loginScreen" class="screen screen--centered">
       <div class="auth-card">
         <h1>Туман — отчёты</h1>
-        <p class="muted">Вход владельца</p>
+        <p class="muted">Вход владельца по паролю</p>
         <form id="loginForm" class="stack gap-12">
           <label>
-            <span>Логин</span>
-            <input type="text" name="username" autocomplete="username" required />
-          </label>
-          <label>
             <span>Пароль</span>
-            <input type="password" name="password" autocomplete="current-password" required />
+            <input type="password" name="password" autocomplete="current-password" autofocus required />
           </label>
           <button class="button button--primary" type="submit">Войти</button>
         </form>

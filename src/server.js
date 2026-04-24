@@ -4,7 +4,7 @@ import express from 'express';
 import cookieParser from 'cookie-parser';
 import { config } from './config.js';
 import { ensureDatabase } from './db.js';
-import { issueAuthCookie, clearAuthCookie, requireOwner, validateCredentials } from './auth.js';
+import { issueAuthCookie, clearAuthCookie, getAuthConfigurationError, requireOwner, validateCredentials } from './auth.js';
 import {
   addOwnerExpense,
   deleteExpense,
@@ -25,11 +25,21 @@ app.use(express.json());
 app.use(cookieParser());
 app.use(express.static(path.join(config.rootDir, 'public')));
 
+const authConfigurationError = getAuthConfigurationError();
+if (authConfigurationError) {
+  console.warn(authConfigurationError);
+}
+
 app.get('/health', (_req, res) => {
   res.json({ ok: true, service: 'tuman-report-app' });
 });
 
 app.post('/api/auth/login', (req, res) => {
+  const currentAuthConfigurationError = getAuthConfigurationError();
+  if (currentAuthConfigurationError) {
+    return res.status(503).json({ error: currentAuthConfigurationError });
+  }
+
   const { username, password } = req.body || {};
   if (!validateCredentials(username, password)) {
     return res.status(401).json({ error: 'Неверный логин или пароль.' });
@@ -43,7 +53,13 @@ app.post('/api/auth/logout', (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/auth/me', requireOwner, (req, res) => {
+app.get('/api/auth/me', (req, res, next) => {
+  const currentAuthConfigurationError = getAuthConfigurationError();
+  if (currentAuthConfigurationError) {
+    return res.status(503).json({ error: currentAuthConfigurationError });
+  }
+  return requireOwner(req, res, next);
+}, (req, res) => {
   res.json({ ok: true, user: req.owner });
 });
 
