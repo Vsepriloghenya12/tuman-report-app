@@ -1,4 +1,15 @@
-import { ALL_CATEGORIES, isAllowedMessageCategory, normalizeCategory } from './categories.js';
+import { isAllowedMessageCategory, normalizeCategory } from './categories.js';
+
+const REQUIRED_FIELDS = [
+  { label: 'Наличные', key: 'cash', example: 'Наличные: 4060' },
+  { label: 'Рубли', key: 'rubles', example: 'Рубли: 16520' },
+  { label: 'Банковские карты', key: 'bankCards', example: 'Банковские карты: 125736' },
+  { label: 'Яндекс доставка', key: 'yandexDelivery', example: 'Яндекс доставка: 1280' },
+  { label: 'Нет монет', key: 'qrCode', example: 'Нет монет: 0' },
+  { label: 'Общая', key: 'totalIncome', example: 'Общая: 147596' },
+  { label: 'Итог', key: 'cashLeft', example: 'Итог: 9501' },
+  { label: 'Итого расход', key: 'expenseTotal', example: 'Итого расход: 6159' }
+];
 
 function toNumber(raw) {
   if (raw == null) return NaN;
@@ -9,22 +20,149 @@ function toNumber(raw) {
   return Number.isFinite(value) ? value : NaN;
 }
 
-function extractLabelValue(lines, label) {
-  const index = lines.findIndex((line) => line.toLowerCase().startsWith(`${label.toLowerCase()}:`));
-  if (index === -1) return { value: null, index: -1 };
+function formatNumberSuggestion(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return '';
+  if (Math.abs(numericValue - Math.round(numericValue)) < 0.0000001) {
+    return String(Math.round(numericValue));
+  }
+  return numericValue.toFixed(2).replace(/\.?0+$/, '');
+}
 
-  const sameLine = lines[index].split(':').slice(1).join(':').trim();
-  if (sameLine) {
-    return { value: sameLine, index };
+function createLineEntries(sourceText) {
+  return String(sourceText || '')
+    .split('\n')
+    .map((raw, index) => ({
+      index,
+      raw,
+      trimmed: raw.trim()
+    }));
+}
+
+function findLineStartingWith(entries, prefix) {
+  const normalizedPrefix = `${prefix.toLowerCase()}:`;
+  return entries.find((entry) => entry.trimmed.toLowerCase().startsWith(normalizedPrefix)) || null;
+}
+
+function extractLabelValue(entries, label) {
+  const labelEntry = findLineStartingWith(entries, label);
+  if (!labelEntry) {
+    return {
+      value: null,
+      labelLineIndex: -1,
+      valueLineIndex: -1,
+      currentLine: null,
+      removeLineIndices: []
+    };
   }
 
-  for (let i = index + 1; i < lines.length; i += 1) {
-    if (lines[i].trim()) {
-      return { value: lines[i].trim(), index };
+  const sameLine = labelEntry.trimmed.split(':').slice(1).join(':').trim();
+  if (sameLine) {
+    return {
+      value: sameLine,
+      labelLineIndex: labelEntry.index,
+      valueLineIndex: labelEntry.index,
+      currentLine: labelEntry.trimmed || `${label}: ${sameLine}`,
+      removeLineIndices: []
+    };
+  }
+
+  for (let i = labelEntry.index + 1; i < entries.length; i += 1) {
+    if (entries[i].trimmed) {
+      return {
+        value: entries[i].trimmed,
+        labelLineIndex: labelEntry.index,
+        valueLineIndex: entries[i].index,
+        currentLine: `${label}: ${entries[i].trimmed}`,
+        removeLineIndices: entries[i].index === labelEntry.index ? [] : [entries[i].index]
+      };
     }
   }
 
-  return { value: null, index };
+  return {
+    value: null,
+    labelLineIndex: labelEntry.index,
+    valueLineIndex: -1,
+    currentLine: `${label}:`,
+    removeLineIndices: []
+  };
+}
+
+function findFieldInsertIndex(entries, label, fallbackIndex = null) {
+  const labelIndex = REQUIRED_FIELDS.findIndex((field) => field.label === label);
+  if (labelIndex === -1) return fallbackIndex;
+
+  for (let i = labelIndex + 1; i < REQUIRED_FIELDS.length; i += 1) {
+    const nextMeta = extractLabelValue(entries, REQUIRED_FIELDS[i].label);
+    if (nextMeta.labelLineIndex >= 0) {
+      return nextMeta.labelLineIndex;
+    }
+  }
+
+  return fallbackIndex;
+}
+
+function buildFieldIssue(entries, field, meta, message) {
+  const expensesHeaderEntry = entries.find((entry) => entry.trimmed.toLowerCase() === 'расходы:');
+
+  if (meta.labelLineIndex >= 0) {
+    return {
+      type: 'field_invalid_value',
+      actionable: true,
+      promptKind: 'text',
+      label: field.label,
+      lineIndex: meta.labelLineIndex,
+      currentLine: meta.currentLine || field.example,
+      exampleLine: field.example,
+      removeLineIndices: meta.removeLineIndices || [],
+      message
+    };
+  }
+
+  return {
+    type: 'field_invalid_value',
+    actionable: true,
+    promptKind: 'text',
+    label: field.label,
+    lineIndex: null,
+    insertAtLineIndex: findFieldInsertIndex(entries, field.label, expensesHeaderEntry?.index ?? entries.length),
+    currentLine: null,
+    exampleLine: field.example,
+    removeLineIndices: [],
+    message
+  };
+}
+
+function buildDateIssue(meaningfulEntries) {
+  const firstMeaningfulEntry = meaningfulEntries[0] || null;
+  return {
+    type: 'date_invalid',
+    actionable: true,
+    promptKind: 'text',
+    label: 'Дата',
+    lineIndex: firstMeaningfulEntry?.index ?? null,
+    insertAtLineIndex: firstMeaningfulEntry?.index ?? 0,
+    currentLine: firstMeaningfulEntry?.trimmed || null,
+    exampleLine: '30.03',
+    removeLineIndices: [],
+    message: 'Не удалось определить дату. Укажи дату первой строкой в формате ДД.ММ.'
+  };
+}
+
+function buildTotalMismatchIssue(fieldMeta, label, actualValue, expectedValue) {
+  return {
+    type: 'field_mismatch',
+    actionable: true,
+    promptKind: 'text',
+    label,
+    lineIndex: fieldMeta.labelLineIndex >= 0 ? fieldMeta.labelLineIndex : null,
+    currentLine: fieldMeta.currentLine || `${label}: ${formatNumberSuggestion(actualValue)}`,
+    exampleLine: `${label}: ${formatNumberSuggestion(expectedValue)}`,
+    removeLineIndices: fieldMeta.removeLineIndices || [],
+    expectedValue,
+    actualValue,
+    message: `Проверь строку "${fieldMeta.currentLine || `${label}: ${formatNumberSuggestion(actualValue)}`}". По расчёту получается ${formatNumberSuggestion(expectedValue)}.`
+  };
 }
 
 function splitExpenseLine(line) {
@@ -62,39 +200,101 @@ function splitExpenseLine(line) {
   return null;
 }
 
-export function parseExpenseLine(line) {
-  const categoryMatch = String(line || '').trim().match(/^(.*?)\s*\(([^()]+)\)\s*$/u);
+function parseExpenseLineDetailed(line, context = {}) {
+  const trimmed = String(line || '').trim();
+  const issueBase = {
+    actionable: true,
+    promptKind: 'text',
+    lineIndex: context.lineIndex ?? null,
+    currentLine: trimmed,
+    removeLineIndices: []
+  };
+
+  const categoryMatch = trimmed.match(/^(.*?)\s*\(([^()]+)\)\s*$/u);
 
   if (!categoryMatch) {
     return {
-      error: `Не найдена категория в конце строки: "${line}". Используй формат: 250 дост (доставка)`
+      ok: false,
+      issue: {
+        ...issueBase,
+        type: 'expense_invalid_line',
+        exampleLine: '250 дост (доставка)',
+        message: `Не найдена категория в конце строки: "${trimmed}". Используй формат: 250 дост (доставка).`
+      }
     };
   }
 
   const beforeCategory = categoryMatch[1].trim();
   const split = splitExpenseLine(beforeCategory);
+  const sourceCategory = categoryMatch[2].trim();
 
   if (!split) {
-    return { error: `Не удалось прочитать сумму в строке: "${line}"` };
+    return {
+      ok: false,
+      issue: {
+        ...issueBase,
+        type: 'expense_invalid_amount',
+        sourceCategory,
+        exampleLine: `250 комментарий (${normalizeCategory(sourceCategory) || 'доставка'})`,
+        message: `Не удалось прочитать сумму в строке: "${trimmed}".`
+      }
+    };
   }
 
   const amount = toNumber(split.amount);
   const comment = split.remainder.trim();
-  const sourceCategory = categoryMatch[2].trim();
+
+  if (!Number.isFinite(amount)) {
+    return {
+      ok: false,
+      issue: {
+        ...issueBase,
+        type: 'expense_invalid_amount',
+        sourceCategory,
+        exampleLine: `250 ${comment || 'комментарий'} (${normalizeCategory(sourceCategory) || 'доставка'})`,
+        message: `Не удалось прочитать сумму в строке: "${trimmed}".`
+      }
+    };
+  }
+
   const category = normalizeCategory(sourceCategory);
 
   if (!isAllowedMessageCategory(category)) {
     return {
-      error: `Неизвестная категория "${sourceCategory}". Разрешены категории: ${ALL_CATEGORIES.join(', ')}.`
+      ok: false,
+      issue: {
+        ...issueBase,
+        type: 'expense_unknown_category',
+        promptKind: 'category',
+        amount,
+        comment,
+        sourceCategory,
+        message: `Неизвестная категория "${sourceCategory}". Выбери, в какую статью расходов это внести.`
+      }
     };
   }
 
   return {
-    amount,
-    comment,
-    category,
-    rawText: line
+    ok: true,
+    value: {
+      amount,
+      comment,
+      category,
+      rawText: line
+    }
   };
+}
+
+export function parseExpenseLine(line, context = {}) {
+  const result = parseExpenseLineDetailed(line, context);
+  if (!result.ok) {
+    return {
+      error: result.issue.message,
+      issue: result.issue
+    };
+  }
+
+  return result.value;
 }
 
 function dateInfoFromParts(day, month, year) {
@@ -125,7 +325,7 @@ export function parseFallbackDate(fallbackDateLike, defaultYear) {
 }
 
 export function parseDate(firstLine, defaultYear) {
-  const match = firstLine.match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
+  const match = String(firstLine || '').trim().match(/^(\d{1,2})\.(\d{1,2})(?:\.(\d{2,4}))?$/);
   if (!match) return null;
 
   const day = Number(match[1]);
@@ -137,77 +337,80 @@ export function parseDate(firstLine, defaultYear) {
 
 export function parseFullReportMessage(text, defaultYear, fallbackDateLike = null) {
   const sourceText = String(text || '').replace(/\r/g, '');
-  const rawLines = sourceText.split('\n');
-  const lines = rawLines.map((line) => line.trim());
-  const meaningfulLines = lines.filter(Boolean);
+  const entries = createLineEntries(sourceText);
+  const meaningfulEntries = entries.filter((entry) => entry.trimmed);
 
-  if (!meaningfulLines.length) {
-    return { ok: false, errors: ['Сообщение пустое.'] };
+  if (!meaningfulEntries.length) {
+    return { ok: false, errors: ['Сообщение пустое.'], issues: [] };
   }
 
-  const explicitDate = parseDate(meaningfulLines[0], defaultYear);
+  const explicitDate = parseDate(meaningfulEntries[0].trimmed, defaultYear);
   const fallbackDate = parseFallbackDate(fallbackDateLike, defaultYear);
   const dateInfo = explicitDate || fallbackDate;
   if (!dateInfo) {
+    const issue = buildDateIssue(meaningfulEntries);
     return {
       ok: false,
-      errors: ['Не удалось определить дату. Укажи дату первой строкой в формате ДД.ММ или отправь сообщение с корректным временем в Telegram.']
+      errors: [issue.message],
+      issues: [issue]
     };
   }
 
-  const requiredFields = [
-    ['Наличные', 'cash'],
-    ['Рубли', 'rubles'],
-    ['Банковские карты', 'bankCards'],
-    ['Яндекс доставка', 'yandexDelivery'],
-    ['Нет монет', 'qrCode'],
-    ['Общая', 'totalIncome'],
-    ['Итог', 'cashLeft'],
-    ['Итого расход', 'expenseTotal']
-  ];
-
-  const fieldErrors = [];
+  const errors = [];
+  const issues = [];
   const fields = {};
+  const fieldMetaByKey = {};
 
-  for (const [label, key] of requiredFields) {
-    const { value } = extractLabelValue(lines, label);
-    const numericValue = toNumber(value);
+  for (const field of REQUIRED_FIELDS) {
+    const meta = extractLabelValue(entries, field.label);
+    fieldMetaByKey[field.key] = meta;
+    const numericValue = toNumber(meta.value);
     if (!Number.isFinite(numericValue)) {
-      fieldErrors.push(`Не найдено или неверно заполнено поле "${label}".`);
+      const issue = buildFieldIssue(
+        entries,
+        field,
+        meta,
+        meta.labelLineIndex >= 0
+          ? `Не удалось прочитать значение поля "${field.label}".`
+          : `Не найдено поле "${field.label}".`
+      );
+      issues.push(issue);
+      errors.push(issue.message);
     } else {
-      fields[key] = numericValue;
+      fields[field.key] = numericValue;
     }
   }
 
-  const expensesHeaderIndex = lines.findIndex((line) => line.toLowerCase() === 'расходы:');
-  const expenseTotalIndex = lines.findIndex((line) => line.toLowerCase().startsWith('итого расход'));
+  const expensesHeaderEntry = entries.find((entry) => entry.trimmed.toLowerCase() === 'расходы:') || null;
+  const expenseTotalLineIndex = fieldMetaByKey.expenseTotal?.labelLineIndex ?? -1;
 
-  if (expensesHeaderIndex === -1) {
-    fieldErrors.push('Не найден блок "Расходы:".');
-  }
-  if (expenseTotalIndex === -1) {
-    fieldErrors.push('Не найдено поле "Итого расход".');
+  if (!expensesHeaderEntry) {
+    errors.push('Не найден блок "Расходы:".');
   }
 
   const expenses = [];
-  if (expensesHeaderIndex !== -1 && expenseTotalIndex !== -1) {
-    const expenseLines = lines
-      .slice(expensesHeaderIndex + 1, expenseTotalIndex)
-      .map((line) => line.trim())
-      .filter(Boolean);
+  if (expensesHeaderEntry && expenseTotalLineIndex >= 0) {
+    const expenseEntries = entries.filter(
+      (entry) => entry.index > expensesHeaderEntry.index && entry.index < expenseTotalLineIndex && entry.trimmed
+    );
 
-    for (const expenseLine of expenseLines) {
-      const parsedExpense = parseExpenseLine(expenseLine);
+    for (const expenseEntry of expenseEntries) {
+      const parsedExpense = parseExpenseLine(expenseEntry.trimmed, { lineIndex: expenseEntry.index });
       if (parsedExpense.error) {
-        fieldErrors.push(parsedExpense.error);
+        issues.push(parsedExpense.issue);
+        errors.push(parsedExpense.error);
       } else {
         expenses.push(parsedExpense);
       }
     }
   }
 
-  if (fieldErrors.length) {
-    return { ok: false, errors: fieldErrors };
+  if (errors.length) {
+    return {
+      ok: false,
+      errors: [...new Set(errors)],
+      issues
+    };
   }
 
   const computedTotalIncome = fields.cash + fields.rubles + fields.bankCards + fields.yandexDelivery + fields.qrCode;
@@ -215,15 +418,29 @@ export function parseFullReportMessage(text, defaultYear, fallbackDateLike = nul
   const validationErrors = [];
 
   if (Math.abs(computedTotalIncome - fields.totalIncome) > 0.0001) {
-    validationErrors.push(`Сумма кассы по строкам = ${computedTotalIncome}, а "Общая" = ${fields.totalIncome}.`);
+    const issue = buildTotalMismatchIssue(
+      fieldMetaByKey.totalIncome,
+      'Общая',
+      fields.totalIncome,
+      computedTotalIncome
+    );
+    issues.push(issue);
+    validationErrors.push(issue.message);
   }
 
   if (Math.abs(computedExpenseTotal - fields.expenseTotal) > 0.0001) {
-    validationErrors.push(`Сумма расходов по строкам = ${computedExpenseTotal}, а "Итого расход" = ${fields.expenseTotal}.`);
+    const issue = buildTotalMismatchIssue(
+      fieldMetaByKey.expenseTotal,
+      'Итого расход',
+      fields.expenseTotal,
+      computedExpenseTotal
+    );
+    issues.push(issue);
+    validationErrors.push(issue.message);
   }
 
   if (validationErrors.length) {
-    return { ok: false, errors: validationErrors };
+    return { ok: false, errors: validationErrors, issues };
   }
 
   return {
@@ -263,53 +480,44 @@ function looksLikeFullReport(lines) {
   });
 }
 
-function looksLikeExpenseOnly(lines) {
-  const meaningful = (lines || []).filter(Boolean);
-  if (!meaningful.length) return false;
-
-  const linesWithoutLeadingDate = parseDate(meaningful[0], new Date().getUTCFullYear())
-    ? meaningful.slice(1)
-    : meaningful;
-
-  if (!linesWithoutLeadingDate.length) return false;
-
-  return linesWithoutLeadingDate.every((line) => /\([^()]+\)\s*$/u.test(String(line || '').trim()));
-}
-
 export function parseExpenseOnlyMessage(text, defaultYear, fallbackDateLike = null) {
   const sourceText = String(text || '').replace(/\r/g, '');
-  const rawLines = sourceText.split('\n');
-  const lines = rawLines.map((line) => line.trim());
-  const meaningfulLines = lines.filter(Boolean);
+  const entries = createLineEntries(sourceText);
+  const meaningfulEntries = entries.filter((entry) => entry.trimmed);
 
-  if (!meaningfulLines.length) {
-    return { ok: false, errors: ['Сообщение пустое.'] };
+  if (!meaningfulEntries.length) {
+    return { ok: false, errors: ['Сообщение пустое.'], issues: [] };
   }
 
-  const explicitDate = parseDate(meaningfulLines[0], defaultYear);
+  const explicitDate = parseDate(meaningfulEntries[0].trimmed, defaultYear);
   const fallbackDate = parseFallbackDate(fallbackDateLike, defaultYear);
   const dateInfo = explicitDate || fallbackDate;
   if (!dateInfo) {
+    const issue = buildDateIssue(meaningfulEntries);
     return {
       ok: false,
-      errors: ['Не удалось определить дату расхода. Укажи дату первой строкой в формате ДД.ММ или отправь сообщение с корректным временем в Telegram.']
+      errors: ['Не удалось определить дату расхода. Укажи дату первой строкой в формате ДД.ММ.'],
+      issues: [issue]
     };
   }
 
-  const expenseLines = (explicitDate ? meaningfulLines.slice(1) : meaningfulLines).filter(Boolean);
-  if (!expenseLines.length) {
+  const expenseEntries = (explicitDate ? meaningfulEntries.slice(1) : meaningfulEntries).filter((entry) => entry.trimmed);
+  if (!expenseEntries.length) {
     return {
       ok: false,
-      errors: ['После даты не найдено ни одной строки расхода. Используй формат: Андрей 50 аванс(зп).']
+      errors: ['После даты не найдено ни одной строки расхода. Используй формат: Андрей 50 аванс (зп).'],
+      issues: []
     };
   }
 
   const expenses = [];
   const errors = [];
+  const issues = [];
 
-  for (const expenseLine of expenseLines) {
-    const parsedExpense = parseExpenseLine(expenseLine);
+  for (const expenseEntry of expenseEntries) {
+    const parsedExpense = parseExpenseLine(expenseEntry.trimmed, { lineIndex: expenseEntry.index });
     if (parsedExpense.error) {
+      issues.push(parsedExpense.issue);
       errors.push(parsedExpense.error);
     } else {
       expenses.push(parsedExpense);
@@ -317,7 +525,7 @@ export function parseExpenseOnlyMessage(text, defaultYear, fallbackDateLike = nu
   }
 
   if (errors.length) {
-    return { ok: false, errors };
+    return { ok: false, errors, issues };
   }
 
   return {

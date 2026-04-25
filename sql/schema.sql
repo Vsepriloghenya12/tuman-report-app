@@ -45,6 +45,29 @@ CREATE TABLE IF NOT EXISTS expense_lines (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS telegram_clarification_sessions (
+  id BIGSERIAL PRIMARY KEY,
+  chat_id BIGINT NOT NULL,
+  user_id BIGINT NOT NULL,
+  source_message_id BIGINT NOT NULL,
+  source_message_kind TEXT NOT NULL DEFAULT 'message',
+  source_message_row_id BIGINT REFERENCES telegram_messages(id) ON DELETE SET NULL,
+  source_message_date BIGINT,
+  original_text TEXT NOT NULL,
+  working_text TEXT NOT NULL,
+  current_issue_type TEXT,
+  current_issue_payload JSONB,
+  prompt_message_id BIGINT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ
+);
+
 CREATE INDEX IF NOT EXISTS idx_daily_reports_month ON daily_reports (report_month);
 CREATE INDEX IF NOT EXISTS idx_expense_lines_report_id ON expense_lines (report_id);
 CREATE INDEX IF NOT EXISTS idx_telegram_messages_created_at ON telegram_messages (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_telegram_clarification_source
+  ON telegram_clarification_sessions (chat_id, source_message_id);
+CREATE INDEX IF NOT EXISTS idx_telegram_clarification_prompt
+  ON telegram_clarification_sessions (chat_id, prompt_message_id);

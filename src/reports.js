@@ -42,6 +42,158 @@ export async function updateMessageParseResult(messageRowId, parseStatus, parseE
   return result.rows[0] || null;
 }
 
+export async function updateTelegramMessageContent(messageRowId, textContent, parseStatus, parseError = null) {
+  const result = await query(
+    `
+      UPDATE telegram_messages
+      SET text_content = $2, parse_status = $3, parse_error = $4, updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [messageRowId, textContent, parseStatus, parseError]
+  );
+  return result.rows[0] || null;
+}
+
+export async function upsertClarificationSession(session) {
+  const result = await query(
+    `
+      INSERT INTO telegram_clarification_sessions (
+        chat_id, user_id, source_message_id, source_message_kind, source_message_row_id,
+        source_message_date, original_text, working_text, current_issue_type,
+        current_issue_payload, prompt_message_id, status, updated_at, resolved_at
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULL,'pending',NOW(),NULL)
+      ON CONFLICT (chat_id, source_message_id)
+      DO UPDATE SET
+        user_id = EXCLUDED.user_id,
+        source_message_kind = EXCLUDED.source_message_kind,
+        source_message_row_id = EXCLUDED.source_message_row_id,
+        source_message_date = EXCLUDED.source_message_date,
+        original_text = EXCLUDED.original_text,
+        working_text = EXCLUDED.working_text,
+        current_issue_type = EXCLUDED.current_issue_type,
+        current_issue_payload = EXCLUDED.current_issue_payload,
+        prompt_message_id = NULL,
+        status = 'pending',
+        updated_at = NOW(),
+        resolved_at = NULL
+      RETURNING *
+    `,
+    [
+      session.chatId,
+      session.userId,
+      session.sourceMessageId,
+      session.sourceMessageKind || 'message',
+      session.sourceMessageRowId || null,
+      session.sourceMessageDate ?? null,
+      session.originalText,
+      session.workingText,
+      session.issue?.type || null,
+      session.issue ? JSON.stringify(session.issue) : null
+    ]
+  );
+  return result.rows[0] || null;
+}
+
+export async function setClarificationPromptMessage(sessionId, promptMessageId) {
+  const result = await query(
+    `
+      UPDATE telegram_clarification_sessions
+      SET prompt_message_id = $2, updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [sessionId, promptMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getPendingClarificationByPrompt(chatId, userId, promptMessageId) {
+  if (!promptMessageId) return null;
+  const result = await query(
+    `
+      SELECT *
+      FROM telegram_clarification_sessions
+      WHERE chat_id = $1
+        AND user_id = $2
+        AND prompt_message_id = $3
+        AND status = 'pending'
+      LIMIT 1
+    `,
+    [chatId, userId, promptMessageId]
+  );
+  return result.rows[0] || null;
+}
+
+export async function getPendingClarificationSession(sessionId) {
+  const result = await query(
+    `
+      SELECT *
+      FROM telegram_clarification_sessions
+      WHERE id = $1 AND status = 'pending'
+      LIMIT 1
+    `,
+    [sessionId]
+  );
+  return result.rows[0] || null;
+}
+
+export async function updateClarificationSession(sessionId, workingText, issue) {
+  const result = await query(
+    `
+      UPDATE telegram_clarification_sessions
+      SET working_text = $2,
+          current_issue_type = $3,
+          current_issue_payload = $4,
+          prompt_message_id = NULL,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [sessionId, workingText, issue?.type || null, issue ? JSON.stringify(issue) : null]
+  );
+  return result.rows[0] || null;
+}
+
+export async function resolveClarificationSession(sessionId, workingText) {
+  const result = await query(
+    `
+      UPDATE telegram_clarification_sessions
+      SET working_text = $2,
+          status = 'resolved',
+          current_issue_type = NULL,
+          current_issue_payload = NULL,
+          prompt_message_id = NULL,
+          updated_at = NOW(),
+          resolved_at = NOW()
+      WHERE id = $1
+      RETURNING *
+    `,
+    [sessionId, workingText]
+  );
+  return result.rows[0] || null;
+}
+
+export async function cancelClarificationsForSourceMessage(chatId, sourceMessageId) {
+  const result = await query(
+    `
+      UPDATE telegram_clarification_sessions
+      SET status = 'cancelled',
+          prompt_message_id = NULL,
+          current_issue_type = NULL,
+          current_issue_payload = NULL,
+          updated_at = NOW(),
+          resolved_at = NOW()
+      WHERE chat_id = $1
+        AND source_message_id = $2
+        AND status = 'pending'
+      RETURNING *
+    `,
+    [chatId, sourceMessageId]
+  );
+  return result.rows;
+}
+
 export async function upsertEmployeeReport(parsed, messageRowId) {
   return withTransaction(async (client) => {
     const reportResult = await client.query(
